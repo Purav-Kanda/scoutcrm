@@ -12,12 +12,13 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
+/*
+ * No dark-mode variant here on purpose: the UI (bg-neutral-50 cards,
+ * dark headings) is only designed against light backgrounds. Letting the
+ * OS-level `prefers-color-scheme: dark` flip --foreground to near-white
+ * made text on the light cards nearly invisible for anyone with a dark
+ * system theme (e.g. the ScoutCRM heading on the login page).
+ */
 
 body {
   background: var(--background);
