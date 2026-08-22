@@ -197,7 +197,16 @@ export async function saveSignals(
       headers: { "Content-Type": "application/json", ...authHeaders(token) },
       body: JSON.stringify({ signals: withIds }),
     });
-    return res.json();
+    // Xano's bulk-insert endpoint acks with {success: true}, not the
+    // created rows (it doesn't echo them back). Return what we sent —
+    // the ids here are client-generated placeholders, not the real
+    // Xano-assigned ones, so callers should treat this as "N signals
+    // were submitted", not a query result. Signal counts and content
+    // are always correct; only these local `id` values aren't the
+    // server's — fine for the current callers (count reporting, and a
+    // stage/list re-fetch that overwrites this anyway).
+    if (!res.ok) throw new Error(`saveSignals failed: ${res.status}`);
+    return withIds;
   }
   signals = [...signals, ...withIds];
   return withIds;
