@@ -25,6 +25,8 @@ export default function Home() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showNewLead, setShowNewLead] = useState(false);
   const [userName, setUserName] = useState<string | null>(null);
+  const [bulkEnriching, setBulkEnriching] = useState(false);
+  const [bulkResult, setBulkResult] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     setError(null);
@@ -74,6 +76,32 @@ export default function Home() {
     return acc;
   }, {} as Record<LeadStage, Lead[]>);
 
+  const newCount = grouped.new?.length ?? 0;
+
+  const bulkEnrich = async () => {
+    setBulkEnriching(true);
+    setBulkResult(null);
+    try {
+      const res = await authFetch("/api/leads/bulk-enrich", { method: "POST" });
+      if (!res.ok) {
+        setBulkResult("Bulk enrich failed. Try again in a moment.");
+      } else {
+        const data = await res.json();
+        setBulkResult(
+          data.total === 0
+            ? "No New leads to enrich."
+            : `Enriched ${data.enriched}/${data.total} leads — ${data.total_signals_added} new signals added${
+                data.failed ? `, ${data.failed} failed` : ""
+              }.`
+        );
+        await refresh();
+      }
+    } catch {
+      setBulkResult("Can't reach the server. Try again.");
+    }
+    setBulkEnriching(false);
+  };
+
   return (
     <div className="min-h-screen bg-neutral-50 text-neutral-900">
       <header className="sticky top-0 z-30 border-b border-neutral-200/80 bg-white/90 backdrop-blur-sm px-6 py-3.5 flex items-center justify-between">
@@ -97,6 +125,23 @@ export default function Home() {
               {userName}
             </span>
           )}
+          {newCount > 0 && (
+            <button
+              onClick={bulkEnrich}
+              disabled={bulkEnriching}
+              title="Runs live SerpApi enrichment on every lead in the New column, one at a time"
+              className="hidden md:flex items-center gap-1.5 rounded-lg border border-neutral-200 px-3.5 py-2 text-sm font-medium text-neutral-700 hover:bg-neutral-50 hover:border-neutral-300 disabled:opacity-50 transition-colors"
+            >
+              {bulkEnriching ? (
+                <>
+                  <span className="h-1.5 w-1.5 rounded-full bg-sky-400 animate-pulse" />
+                  Enriching…
+                </>
+              ) : (
+                `⚡ Enrich all New (${newCount})`
+              )}
+            </button>
+          )}
           <button
             onClick={() => setShowNewLead(true)}
             className="rounded-lg bg-neutral-900 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-neutral-700 active:scale-[0.98] transition-all"
@@ -115,6 +160,17 @@ export default function Home() {
       </header>
 
       <main className="p-6 overflow-x-auto">
+        {bulkResult && (
+          <div className="mb-4 flex items-center justify-between rounded-lg border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-700">
+            <span>{bulkResult}</span>
+            <button
+              onClick={() => setBulkResult(null)}
+              className="text-sky-400 hover:text-sky-700 text-lg leading-none px-1"
+            >
+              &times;
+            </button>
+          </div>
+        )}
         {error && (
           <div className="mb-4 flex items-center justify-between rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
             <span>{error}</span>
