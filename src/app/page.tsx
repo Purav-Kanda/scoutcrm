@@ -27,6 +27,9 @@ export default function Home() {
   const [userName, setUserName] = useState<string | null>(null);
   const [bulkEnriching, setBulkEnriching] = useState(false);
   const [bulkResult, setBulkResult] = useState<string | null>(null);
+  const [draggedLeadId, setDraggedLeadId] = useState<string | null>(null);
+  const [dragOverStage, setDragOverStage] = useState<LeadStage | null>(null);
+  const [stageUpdateError, setStageUpdateError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     setError(null);
@@ -100,6 +103,34 @@ export default function Home() {
       setBulkResult("Can't reach the server. Try again.");
     }
     setBulkEnriching(false);
+  };
+
+  // Drag-and-drop stage change. Updates local state immediately (so the
+  // card visibly jumps columns without waiting on the network), then
+  // persists via PATCH. If the PATCH fails, rolls back by re-fetching from
+  // the server instead of guessing what the correct prior state was —
+  // simpler and can't drift from reality.
+  const moveLeadToStage = async (leadId: string, stage: LeadStage) => {
+    // dataTransfer.getData always hands back a string, but Xano's ids are
+    // numbers at runtime even though Lead.id is typed as `string` — a
+    // strict `l.id === leadId` here silently never matches, so compare as
+    // strings on both sides.
+    const key = String(leadId);
+    const lead = leads.find((l) => String(l.id) === key);
+    if (!lead || lead.stage === stage) return;
+    const prevStage = lead.stage;
+    setLeads((prev) => prev.map((l) => (String(l.id) === key ? { ...l, stage } : l)));
+    try {
+      const res = await authFetch(`/api/leads/${leadId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ stage }),
+      });
+      if (!res.ok) throw new Error("patch failed");
+    } catch {
+      setLeads((prev) => prev.map((l) => (String(l.id) === key ? { ...l, stage: prevStage } : l)));
+      setStageUpdateError("Couldn't move that lead. Try again.");
+    }
   };
 
   return (
@@ -182,6 +213,17 @@ export default function Home() {
             </button>
           </div>
         )}
+        {stageUpdateError && (
+          <div className="mb-4 flex items-center justify-between rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            <span>{stageUpdateError}</span>
+            <button
+              onClick={() => setStageUpdateError(null)}
+              className="text-red-400 hover:text-red-700 text-lg leading-none px-1"
+            >
+              &times;
+            </button>
+          </div>
+        )}
 
         {loading ? (
           <div className="flex gap-4 min-w-max">
@@ -223,8 +265,30 @@ export default function Home() {
           <div className="flex gap-4 min-w-max">
             {LEAD_STAGES.map((stage) => {
               const colors = STAGE_COLORS[stage.accent as StageAccent];
+              const isDropTarget = dragOverStage === stage.key;
               return (
-                <div key={stage.key} className="w-72 shrink-0">
+                <div
+                  key={stage.key}
+                  className="w-72 shrink-0"
+                  onDragOver={(e) => {
+                    e.preventDefault(); // required to allow a drop at all
+                    if (dragOverStage !== stage.key) setDragOverStage(stage.key);
+                  }}
+                  onDragLeave={(e) => {
+                    // Only clear when actually leaving the column, not when
+                    // moving between child elements inside it.
+                    if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+                      setDragOverStage((cur) => (cur === stage.key ? null : cur));
+                    }
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    const leadId = e.dataTransfer.getData("text/plain") || draggedLeadId;
+                    if (leadId) moveLeadToStage(leadId, stage.key);
+                    setDragOverStage(null);
+                    setDraggedLeadId(null);
+                  }}
+                >
                   <div className="flex items-center gap-2 mb-3 px-1">
                     <span className={`h-1.5 w-1.5 rounded-full ${colors.dot}`} />
                     <h2 className="text-xs font-semibold uppercase tracking-wide text-neutral-500">
@@ -234,12 +298,28 @@ export default function Home() {
                       {grouped[stage.key]?.length ?? 0}
                     </span>
                   </div>
-                  <div className="space-y-2">
+                  <div
+                    className={`space-y-2 min-h-[3rem] rounded-xl transition-colors ${
+                      isDropTarget ? `ring-2 ring-offset-2 ${colors.ring} bg-white/60` : ""
+                    }`}
+                  >
                     {(grouped[stage.key] ?? []).map((lead) => (
                       <button
                         key={lead.id}
+                        draggable
+                        onDragStart={(e) => {
+                          e.dataTransfer.setData("text/plain", lead.id);
+                          e.dataTransfer.effectAllowed = "move";
+                          setDraggedLeadId(lead.id);
+                        }}
+                        onDragEnd={() => {
+                          setDraggedLeadId(null);
+                          setDragOverStage(null);
+                        }}
                         onClick={() => setSelectedId(lead.id)}
-                        className={`w-full text-left rounded-xl border border-neutral-200 border-l-[3px] ${colors.cardBorder} bg-white p-3 shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all duration-150`}
+                        className={`w-full text-left rounded-xl border border-neutral-200 border-l-[3px] ${colors.cardBorder} bg-white p-3 shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all duration-150 cursor-grab active:cursor-grabbing ${
+                          draggedLeadId === lead.id ? "opacity-40" : ""
+                        }`}
                       >
                         <div className="flex items-start gap-2.5">
                           <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-neutral-100 text-[11px] font-semibold text-neutral-500">
@@ -263,7 +343,7 @@ export default function Home() {
                     ))}
                     {(grouped[stage.key] ?? []).length === 0 && (
                       <p className="text-xs text-neutral-300 px-1 py-4 text-center border border-dashed border-neutral-200 rounded-xl">
-                        Empty
+                        {isDropTarget ? "Drop here" : "Empty"}
                       </p>
                     )}
                   </div>
